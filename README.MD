@@ -85,6 +85,25 @@ AI Telegram Responder — инструмент для создания и обу
 2. Создайте виртуальное окружение и активируйте его.
 3. Установите зависимости из `requirements.txt`.
 
+### Установка на Debian/Ubuntu
+
+Для корректной работы на Debian/Ubuntu необходимо установить системные зависимости:
+
+```bash
+sudo apt update
+sudo apt install python3-venv python3-tk python3-dev
+```
+
+**Объяснение:**
+- `python3-venv` — для создания виртуального окружения
+- `python3-tk` — необходим для GUI меню приложения (используется в `start/linux/start_linux.py`)
+- `python3-dev` — содержит заголовки Python, необходимые для компиляции модулей при обучении моделей
+
+Если вы используете GPU (NVIDIA CUDA), также убедитесь, что установлены:
+```bash
+sudo apt install build-essential
+```
+
 ## ⚙️ Настройка
 
 - **Через меню приложения:**  
