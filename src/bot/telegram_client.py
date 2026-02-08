@@ -35,7 +35,7 @@ from pyrogram.errors import (
     PhoneNumberInvalid, PhoneCodeInvalid
 )
 
-from src.utils.inference import ResponseGenerator
+from src.utils.openrouter_inference import OpenRouterResponseGenerator
 
 class TelegramResponder:
     def __init__(
@@ -54,7 +54,6 @@ class TelegramResponder:
         try:
             if config_manager:
                 telegram_config = config_manager.get_telegram_config()
-                inference_config = config_manager.get_inference_config()
                 logging_config = config_manager.get_section('logging', {})
                 logging.basicConfig(level=getattr(logging, logging_config.get('level', 'INFO')),
                                   format=logging_config.get('format', '%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
@@ -63,11 +62,17 @@ class TelegramResponder:
                 with open(config_path, 'r') as f:
                     config = yaml.safe_load(f)
                 telegram_config = config['telegram']
-                inference_config = config['inference']
                 logging_config = config['logging']
                 logging.basicConfig(level=getattr(logging, logging_config['level']), format=logging_config['format'])
                 
             self.logger = logging.getLogger(__name__)
+            self.anti_spam_config = telegram_config.get("anti_spam", {})
+            self.anti_spam_enabled = self.anti_spam_config.get("enabled", True)
+            self.cooldown_seconds = self.anti_spam_config.get("cooldown_seconds", 12)
+            self.duplicate_window_seconds = self.anti_spam_config.get("duplicate_window_seconds", 45)
+            self.max_duplicates = self.anti_spam_config.get("max_duplicates", 2)
+            self.last_response_at = {}
+            self.message_stats = {}
 
             self.api_id = api_id or os.getenv("API_ID") or telegram_config.get('api_id')
             self.api_hash = api_hash or os.getenv("API_HASH") or telegram_config.get('api_hash')
@@ -103,8 +108,10 @@ class TelegramResponder:
                 sleep_threshold=10,
             )
             
-            self.response_generator = ResponseGenerator(model_path, config_manager)
-            self.model_info = self._get_model_info()
+            self.response_generator = OpenRouterResponseGenerator(config_manager)
+            self.model_info = self.response_generator.model
+            self.conversation_history = {}
+            self.messages_seen = 0
             
             self.is_running = False
             
@@ -124,20 +131,70 @@ class TelegramResponder:
             raise
 
     def _get_model_info(self):
-        if hasattr(self.response_generator, 'metadata'):
-            return f"{self.response_generator.metadata.get('target_user', 'Неизвестно')}"
-        return "Последняя доступная модель"
+        return self.response_generator.model
+
+    def _append_history(self, chat_id, role, content):
+        history = self.conversation_history.setdefault(chat_id, [])
+        history.append({"role": role, "content": content})
+        max_window = self.response_generator.profile_manager.messages_window
+        if len(history) > max_window:
+            self.conversation_history[chat_id] = history[-max_window:]
+
+    def _get_history(self, chat_id):
+        return self.conversation_history.get(chat_id, [])
+
+    def _should_block_spam(self, message):
+        if not self.anti_spam_enabled:
+            return False
+
+        user_id = message.from_user.id if message.from_user else message.chat.id
+        now = asyncio.get_event_loop().time()
+        last_sent = self.last_response_at.get(user_id, 0)
+        if now - last_sent < self.cooldown_seconds:
+            self.logger.info("Анти-спам: cooldown активен для %s", user_id)
+            return True
+
+        normalized = message.text.strip().lower()
+        stats = self.message_stats.setdefault(user_id, {})
+        recent = stats.get("recent", [])
+        recent = [
+            (text, ts)
+            for text, ts in recent
+            if now - ts <= self.duplicate_window_seconds
+        ]
+        recent.append((normalized, now))
+        stats["recent"] = recent
+        duplicates = sum(1 for text, _ in recent if text == normalized)
+        if duplicates > self.max_duplicates:
+            self.logger.info("Анти-спам: слишком много дублей от %s", user_id)
+            return True
+
+        return False
 
     async def _send_response(self, client, message):
         try:
             self.logger.info(f"Получено сообщение от {message.from_user.first_name} ({message.from_user.id}): {message.text}")
-            
-            response = self.response_generator.generate_response(message.text)
+
+            chat_id = message.chat.id
+            self._append_history(chat_id, "user", message.text)
+            self.messages_seen += 1
+            behavior_profile = self.response_generator.update_behavior_profile(
+                self._get_history(chat_id),
+                self.messages_seen,
+            )
+            response = self.response_generator.generate_response(
+                message.text,
+                conversation_history=self._get_history(chat_id),
+                behavior_profile=behavior_profile,
+            )
             delay = min(len(response) * 0.1, 3)
             
             await client.send_chat_action(message.chat.id, ChatAction.TYPING)
             await asyncio.sleep(delay)
             await message.reply(response)
+            self._append_history(chat_id, "assistant", response)
+            user_id = message.from_user.id if message.from_user else message.chat.id
+            self.last_response_at[user_id] = asyncio.get_event_loop().time()
             
             self.logger.info(f"Отправлен ответ: {response}")
         except FloodWait as e:
@@ -158,25 +215,23 @@ class TelegramResponder:
             if self.mode == "only_private_chats":
                 if message.chat.type == ChatType.PRIVATE:
                     if -1 in self.target_user_ids or message.from_user.id in self.target_user_ids:
-                        await self._send_response(client, message)
+                        if not self._should_block_spam(message):
+                            await self._send_response(client, message)
             
             elif self.mode == "only_channel_messages":
                 if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP, ChatType.CHANNEL]:
                     if -1 in self.target_channel_ids or message.chat.id in self.target_channel_ids:
-                        await self._send_response(client, message)
+                        if not self._should_block_spam(message):
+                            await self._send_response(client, message)
             
             elif self.mode == "stalker":
                 if message.from_user and message.from_user.id in self.target_user_ids:
-                    await self._send_response(client, message)
+                    if not self._should_block_spam(message):
+                        await self._send_response(client, message)
         except Exception as e:
             self.logger.error(f"Ошибка при обработке сообщения: {e}")
 
     async def start(self):
-        if not self.response_generator.model:
-            self.logger.error("Нет загруженной модели. Не могу запустить клиент.")
-            print("❌ Нет загруженной модели. Сначала обучите модель или выберите существующую.")
-            return
-        
         self.is_running = True
         
         self.client.add_handler(MessageHandler(self.message_handler))

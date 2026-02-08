@@ -20,23 +20,39 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-import os
 import sys
-import logging
-from start.main import main
-import asyncio
+from pathlib import Path
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+from dotenv import load_dotenv
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.append(str(ROOT))
+
+from src.utils.openrouter_inference import OpenRouterResponseGenerator  # noqa: E402
+from start.main import ConfigManager  # noqa: E402
+
+
+def main():
+    load_dotenv()
+    config_manager = ConfigManager()
+    prompt = "Привет! Расскажи коротко, как у тебя настроение."
+
+    try:
+        generator = OpenRouterResponseGenerator(config_manager)
+    except Exception as exc:
+        print(f"❌ Не удалось инициализировать OpenRouter: {exc}")
+        return 1
+
+    try:
+        response = generator.generate_response(prompt)
+    except Exception as exc:
+        print(f"❌ Ошибка при запросе к OpenRouter: {exc}")
+        return 1
+
+    print("✅ OpenRouter ответ:")
+    print(response)
+    return 0
+
 
 if __name__ == "__main__":
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.StreamHandler(),
-            logging.FileHandler('../../app_log.txt')
-        ]
-    )
-    
-    logging.info("Запуск на Windows")
-    asyncio.run(main())
+    raise SystemExit(main())

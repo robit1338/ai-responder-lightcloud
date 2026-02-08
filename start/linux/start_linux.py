@@ -22,36 +22,22 @@
 
 import asyncio
 import logging
-import torch
 import sys
-import gc
 import os
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
 from start.main import main
 
-os.environ["OMP_NUM_THREADS"] = "4"
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-
 if __name__ == "__main__":
-    gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-        device_name = torch.cuda.get_device_name(0)
-        device_memory = torch.cuda.get_device_properties(0).total_memory / (1024**3)
-        logging.info(f"NVIDIA GPU обнаружена: {device_name} ({device_memory:.1f} ГБ)")
-    else:
-        logging.info("NVIDIA GPU не обнаружена, будет использоваться CPU")
-
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(levelname)s - %(message)s',
         handlers=[
             logging.StreamHandler(),
-            logging.FileHandler('../../training_log.txt')
+            logging.FileHandler('../../app_log.txt')
         ]
     )
 
-    logging.info("Запуск на Linux с оптимизацией для NVIDIA GPU")
+    logging.info("Запуск на Linux")
     asyncio.run(main())
