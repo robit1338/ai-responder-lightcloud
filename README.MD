@@ -52,10 +52,10 @@ AI Telegram Responder — инструмент для создания и обу
    cd ai-responder
    ```
 
-2. **Создайте виртуальное окружение и установите зависимости:**
+2. **Создайте виртуальное окружение и установите зависимости (Windows):**
    ```bash
    python -m venv venv
-   source venv/bin/activate  # Windows: venv\Scripts\activate
+   venv\Scripts\activate
    pip install -r requirements.txt
    ```
 
@@ -63,19 +63,8 @@ AI Telegram Responder — инструмент для создания и обу
    - Получите `api_id` и `api_hash` на [my.telegram.org](https://my.telegram.org/apps)
    - Заполните файл `.env` или `config/config.yaml` (см. ниже)
 
-4. **Запустите приложение:**
+4. **Запустите приложение (Windows):**
    ```bash
-   # macOS
-   python start/macos/start_macos.py
-   # либо
-   chmod +x start/macos/start_macos.sh
-   /macos/start_macos.sh
-   # Linux
-   python start/linux/start_linux.py
-   # либо
-   chmod +x start/linux/start_linux.sh
-   /linux/start_linux.sh
-   # Windows
    python start/windows/start_windows.py
    ```
 
@@ -85,24 +74,6 @@ AI Telegram Responder — инструмент для создания и обу
 2. Создайте виртуальное окружение и активируйте его.
 3. Установите зависимости из `requirements.txt`.
 
-### Установка на Debian/Ubuntu
-
-Для корректной работы на Debian/Ubuntu необходимо установить системные зависимости:
-
-```bash
-sudo apt update
-sudo apt install python3-venv python3-tk python3-dev
-```
-
-**Объяснение:**
-- `python3-venv` — для создания виртуального окружения
-- `python3-tk` — необходим для GUI меню приложения (используется в `start/linux/start_linux.py`)
-- `python3-dev` — содержит заголовки Python, необходимые для компиляции модулей при обучении моделей
-
-Если вы используете GPU (NVIDIA CUDA), также убедитесь, что установлены:
-```bash
-sudo apt install build-essential
-```
 
 ## ⚙️ Настройка
 
@@ -139,7 +110,7 @@ sudo apt install build-essential
 ### Пример запуска
 
 ```bash
-python start/macos/start_macos.py
+python start/windows/start_windows.py
 ```
 
 ## 🧩 Профили генерации
@@ -164,8 +135,6 @@ ai-responder/
 │   └── utils/
 ├── start/
 │   ├── main.py
-│   ├── macos/
-│   ├── linux/
 │   └── windows/
 ├── config/
 │   ├── config.yaml
@@ -203,4 +172,3 @@ ai-responder/
 ## 📄 Лицензия
 
 Проект распространяется под лицензией MIT. Подробнее — в файле [LICENSE](LICENSE).
-
