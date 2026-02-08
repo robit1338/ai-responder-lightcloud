@@ -28,7 +28,7 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(ROOT))
 
-from src.utils.openrouter_inference import OpenRouterResponseGenerator  # noqa: E402
+from src.utils.provider_inference import ProviderResponseGenerator  # noqa: E402
 from start.main import ConfigManager  # noqa: E402
 
 
@@ -38,18 +38,18 @@ def main():
     prompt = "Привет! Расскажи коротко, как у тебя настроение."
 
     try:
-        generator = OpenRouterResponseGenerator(config_manager)
+        generator = ProviderResponseGenerator(config_manager)
     except Exception as exc:
-        print(f"❌ Не удалось инициализировать OpenRouter: {exc}")
+        print(f"❌ Не удалось инициализировать провайдера: {exc}")
         return 1
 
     try:
         response = generator.generate_response(prompt)
     except Exception as exc:
-        print(f"❌ Ошибка при запросе к OpenRouter: {exc}")
+        print(f"❌ Ошибка при запросе к провайдеру: {exc}")
         return 1
 
-    print("✅ OpenRouter ответ:")
+    print("✅ Ответ провайдера:")
     print(response)
     return 0
 

@@ -35,7 +35,7 @@ from pyrogram.errors import (
     PhoneNumberInvalid, PhoneCodeInvalid
 )
 
-from src.utils.openrouter_inference import OpenRouterResponseGenerator
+from src.utils.provider_inference import ProviderResponseGenerator
 
 class TelegramResponder:
     def __init__(
@@ -108,7 +108,7 @@ class TelegramResponder:
                 sleep_threshold=10,
             )
             
-            self.response_generator = OpenRouterResponseGenerator(config_manager)
+            self.response_generator = ProviderResponseGenerator(config_manager)
             self.model_info = self.response_generator.model
             self.conversation_history = {}
             self.messages_seen = 0

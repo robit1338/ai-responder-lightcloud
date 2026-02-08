@@ -156,27 +156,30 @@ def settings_menu(config_manager: ConfigManager):
         print("="*40)
         print("1. Режим Telegram-бота")
         print("2. Файлы поведения")
-        print("3. Сохранить все настройки")
-        print("4. Вернуться в главное меню")
+        print("3. Провайдер модели")
+        print("4. Сохранить все настройки")
+        print("5. Вернуться в главное меню")
         print("="*40)
         
-        choice = input("Выберите опцию (1-4): ")
+        choice = input("Выберите опцию (1-5): ")
 
         if choice == "1":
             _handle_telegram_mode_settings(config_manager)
         elif choice == "2":
             _handle_behavior_files_settings(config_manager)
         elif choice == "3":
+            _handle_provider_settings(config_manager)
+        elif choice == "4":
             if config_manager.save_yaml_config():
                 print("\n✅ Все настройки успешно сохранены в файл конфигурации!")
             else:
                 print("\n❌ Не удалось сохранить настройки. Проверьте права доступа к файлу.")
-        elif choice == "4":
+        elif choice == "5":
             if _prompt_for_save_if_needed(config_manager):
                 config_manager.save_yaml_config()
             break
         else:
-            print("❌ Неверный выбор. Пожалуйста, введите число от 1 до 4.")
+            print("❌ Неверный выбор. Пожалуйста, введите число от 1 до 5.")
 
 
 def _handle_telegram_mode_settings(config_manager: ConfigManager):
@@ -219,8 +222,8 @@ def _handle_behavior_files_settings(config_manager: ConfigManager):
     print("     ФАЙЛЫ ПОВЕДЕНИЯ")
     print("-"*40)
 
-    openrouter_cfg = config_manager.yaml_config.get("openrouter", {})
-    profile_cfg = openrouter_cfg.get("behavior_profile", {})
+    llm_cfg = config_manager.yaml_config.get("llm", {})
+    profile_cfg = llm_cfg.get("behavior_profile", {})
     behavior_dir = profile_cfg.get("behavior_files_dir", "data/behavior")
 
     if not os.path.exists(behavior_dir):
@@ -247,11 +250,44 @@ def _handle_behavior_files_settings(config_manager: ConfigManager):
         return
 
     filename = files[int(choice) - 1]
-    config_manager.update_yaml_setting("openrouter", "behavior_profile", {
+    config_manager.update_yaml_setting("llm", "behavior_profile", {
         **profile_cfg,
         "behavior_files": [filename],
     })
     print(f"\n✅ Подключен файл поведения: {filename}")
+
+
+def _handle_provider_settings(config_manager: ConfigManager):
+    print("\n" + "-"*40)
+    print("     ПРОВАЙДЕР МОДЕЛИ")
+    print("-"*40)
+
+    llm_cfg = config_manager.yaml_config.get("llm", {})
+    providers_cfg = config_manager.yaml_config.get("providers", {})
+    providers = list(providers_cfg.keys())
+
+    if not providers:
+        print("❌ Провайдеры не настроены в config.yaml.")
+        return
+
+    current = llm_cfg.get("provider", providers[0])
+    print(f"Текущий провайдер: {current}")
+    print("\nДоступные провайдеры:")
+    for i, name in enumerate(providers, 1):
+        marker = "✓" if name == current else " "
+        print(f"{i}. [{marker}] {name}")
+
+    choice = input("\nВыберите провайдера (номер) или 0 для отмены: ").strip()
+    if choice == "0":
+        print("Изменение отменено.")
+        return
+    if not choice.isdigit() or not (1 <= int(choice) <= len(providers)):
+        print("❌ Неверный выбор.")
+        return
+
+    selected = providers[int(choice) - 1]
+    config_manager.update_yaml_setting("llm", "provider", selected)
+    print(f"\n✅ Провайдер изменен на: {selected}")
 
 
 def _prompt_for_save_if_needed(config_manager: ConfigManager) -> bool:
