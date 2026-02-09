@@ -62,11 +62,11 @@ AI Telegram Responder — инструмент для автоматически
    ```bash
    python start/windows/start_windows.py
    ```
-Или
+   Или
    ```bash
    python -m start.windows.start_windows
    ```
-Или
+   Или
    ```bash
    Просто запусти start.bat
    ```
