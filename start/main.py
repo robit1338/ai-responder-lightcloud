@@ -28,8 +28,6 @@ from tkinter import filedialog
 from typing import Dict, Any
 
 from src.utils.data_processor import DataProcessor
-from src.ml.model_trainer import ModelTrainer
-from src.utils.inference import ResponseGenerator
 from src.bot.telegram_client import TelegramResponder
 
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
@@ -81,14 +79,8 @@ class ConfigManager:
         self.yaml_config['main_settings'][key] = value
         self.save_yaml_config()
 
-    def get_ml_config(self) -> Dict[str, Any]:
-        return self.yaml_config.get('ml', {})
-
     def get_telegram_config(self) -> Dict[str, Any]:
         return self.yaml_config.get('telegram', {})
-
-    def get_inference_config(self) -> Dict[str, Any]:
-        return self.yaml_config.get('inference', {})
     
     def get_data_processor_config(self) -> Dict[str, Any]:
         return self.yaml_config.get('data_processor', {})
@@ -106,9 +98,7 @@ class ConfigManager:
                 self.yaml_config['main_settings'] = {}
 
             mapping = {
-                'ml': {'model': 'model'},
                 'telegram': {'mode': 'telegram_mode'},
-                'inference': {'active_profile': 'active_generation_profile'},
                 'main_settings': {}
             }
             
@@ -158,49 +148,16 @@ def change_bot_mode(config_manager: ConfigManager):
         return False
 
 
-def select_training_device(model_trainer, config_manager: ConfigManager):
-    current_device = config_manager.get_app_config("training_device", model_trainer.get_current_device())
-
-    print("\n===== Выбор устройства для обучения =====")
-    print(f"Текущее устройство: {current_device}")
-
-    available_devices = model_trainer.get_available_devices()
-
-    print("\nДоступные устройства:")
-    options = list(available_devices.items())
-    for i, (device_id, device_name) in enumerate(options, 1):
-        print(f"{i}. {device_name} ({'текущее' if device_id == current_device else 'доступно'})")
-
-    try:
-        choice = int(input("\nВыберите устройство (номер) или 0 для отмены: "))
-
-        if choice == 0:
-            print("Выбор устройства отменен.")
-            return
-
-        if 1 <= choice <= len(options):
-            selected_device = options[choice-1][0]
-            if model_trainer.set_device(selected_device):
-                config_manager.set_app_config("training_device", selected_device)
-                print(f"\n✅ Устройство для обучения изменено на: {available_devices[selected_device]}")
-            else:
-                print("\n❌ Не удалось установить выбранное устройство.")
-        else:
-            print("Неверный выбор.")
-
-    except ValueError:
-        print("Пожалуйста, введите число.")
-
-def settings_menu(config_manager: ConfigManager, model_trainer):
+def settings_menu(config_manager: ConfigManager):
     """Меню настроек с улучшенной читаемостью и функционалом сохранения."""
     while True:
         print("\n" + "="*40)
         print("        НАСТРОЙКИ AI-RESPONDER")
         print("="*40)
-        print("1. Профиль генерации текста")
-        print("2. Модель по умолчанию")
-        print("3. Режим Telegram-бота")
-        print("4. Устройство для обучения")
+        print("1. Режим Telegram-бота")
+        print("2. Файлы поведения")
+        print("3. Провайдер модели")
+        print("4. Настройки диалога и задержек")
         print("5. Сохранить все настройки")
         print("6. Вернуться в главное меню")
         print("="*40)
@@ -208,16 +165,13 @@ def settings_menu(config_manager: ConfigManager, model_trainer):
         choice = input("Выберите опцию (1-6): ")
 
         if choice == "1":
-            _handle_generation_profile_settings(config_manager)
-        elif choice == "2":
-            _handle_default_model_settings(config_manager)
-        elif choice == "3":
             _handle_telegram_mode_settings(config_manager)
+        elif choice == "2":
+            _handle_behavior_files_settings(config_manager)
+        elif choice == "3":
+            _handle_provider_settings(config_manager)
         elif choice == "4":
-            if hasattr(model_trainer, "get_available_devices"):
-                select_training_device(model_trainer, config_manager)
-            else:
-                print("❌ Не поддерживается в вашей версии.")
+            _handle_dialogue_settings(config_manager)
         elif choice == "5":
             if config_manager.save_yaml_config():
                 print("\n✅ Все настройки успешно сохранены в файл конфигурации!")
@@ -229,68 +183,6 @@ def settings_menu(config_manager: ConfigManager, model_trainer):
             break
         else:
             print("❌ Неверный выбор. Пожалуйста, введите число от 1 до 6.")
-            
-
-def _handle_generation_profile_settings(config_manager: ConfigManager):
-    print("\n" + "-"*40)
-    print("     ПРОФИЛИ ГЕНЕРАЦИИ ТЕКСТА")
-    print("-"*40)
-
-    profiles = config_manager.yaml_config.get("inference", {}) \
-        .get("model", {}) \
-        .get("generation_profiles", {})
-
-    if not profiles:
-        print("❌ Не найдено ни одного профиля генерации в конфиге.")
-        print("DEBUG: inference.model.generation_profiles =", config_manager.yaml_config.get("inference", {}).get("model", {}).get("generation_profiles"))
-        print("DEBUG: Полный config['inference'] =", config_manager.yaml_config.get("inference"))
-        return
-
-    active = config_manager.yaml_config.get("main_settings", {}).get("active_generation_profile") \
-        or config_manager.yaml_config.get("inference", {}).get("active_profile", "creative")
-
-    print("Доступные профили генерации:")
-    for i, key in enumerate(profiles, 1):
-        current = "✓" if key == active else " "
-        profile = profiles[key]
-        print(f"{i}. [{current}] {key}")
-        print(f"   Длина: {profile.get('max_length', 'Не указано')}, "
-              f"Температура: {profile.get('temperature', 'Не указано')}")
-
-    idx = input("\nВыберите профиль (номер) или 0 для отмены: ")
-
-    if idx.isdigit() and 1 <= int(idx) <= len(profiles):
-        selected = list(profiles.keys())[int(idx)-1]
-        config_manager.update_yaml_setting('inference', 'active_profile', selected)
-        print(f"\n✅ Активный профиль изменен на: {selected}")
-    elif idx == "0":
-        print("Выбор профиля отменен.")
-    else:
-        print("❌ Неверный выбор.")
-
-
-def _handle_default_model_settings(config_manager: ConfigManager):
-    print("\n" + "-"*40)
-    print("     НАСТРОЙКА МОДЕЛИ ПО УМОЛЧАНИЮ")
-    print("-"*40)
-    
-    ml_cfg = config_manager.get_ml_config()
-    current_model = ml_cfg.get("model", "gpt2")
-    
-    print(f"Текущая модель: {current_model}")
-    print("\nПримеры доступных моделей:")
-    print("- gpt2")
-    print("- facebook/opt-125m")
-    print("- EleutherAI/pythia-70m")
-    print("- sberbank-ai/rugpt3small_based_on_gpt2")
-    
-    new_model = input("\nВведите название модели (или Enter для отмены): ").strip()
-    
-    if new_model:
-        config_manager.update_yaml_setting('ml', 'model', new_model)
-        print(f"\n✅ Модель изменена на: {new_model}")
-    else:
-        print("Изменение модели отменено.")
 
 
 def _handle_telegram_mode_settings(config_manager: ConfigManager):
@@ -328,6 +220,164 @@ def _handle_telegram_mode_settings(config_manager: ConfigManager):
         print("❌ Неверный выбор.")
 
 
+def _handle_behavior_files_settings(config_manager: ConfigManager):
+    print("\n" + "-"*40)
+    print("     ФАЙЛЫ ПОВЕДЕНИЯ")
+    print("-"*40)
+
+    llm_cfg = config_manager.yaml_config.get("llm", {})
+    profile_cfg = llm_cfg.get("behavior_profile", {})
+    behavior_dir = profile_cfg.get("behavior_files_dir", "data/behavior")
+
+    if not os.path.exists(behavior_dir):
+        os.makedirs(behavior_dir, exist_ok=True)
+
+    files = [f for f in os.listdir(behavior_dir) if f.lower().endswith(".txt")]
+    if not files:
+        print(f"❌ В папке {behavior_dir} нет файлов .txt. Добавьте файл поведения и повторите.")
+        return
+
+    selected = profile_cfg.get("behavior_files", [])
+    print(f"Текущие файлы: {', '.join(selected) if selected else 'не выбраны'}")
+    print("\nДоступные файлы:")
+    for i, filename in enumerate(files, 1):
+        marker = "✓" if filename in selected else " "
+        print(f"{i}. [{marker}] {filename}")
+
+    choice = input("\nВыберите файл (номер) или 0 для отмены: ").strip()
+    if choice == "0":
+        print("Изменение отменено.")
+        return
+    if not choice.isdigit() or not (1 <= int(choice) <= len(files)):
+        print("❌ Неверный выбор.")
+        return
+
+    filename = files[int(choice) - 1]
+    config_manager.update_yaml_setting("llm", "behavior_profile", {
+        **profile_cfg,
+        "behavior_files": [filename],
+    })
+    print(f"\n✅ Подключен файл поведения: {filename}")
+
+
+def _handle_dialogue_settings(config_manager: ConfigManager):
+    print("\n" + "-"*40)
+    print("     НАСТРОЙКИ ДИАЛОГА И ЗАДЕРЖЕК")
+    print("-"*40)
+
+    telegram_cfg = config_manager.yaml_config.get("telegram", {})
+    response_cfg = telegram_cfg.get("response_timing", {})
+    proactive_cfg = telegram_cfg.get("proactive_dialogue", {})
+
+    while True:
+        print("\nТекущие значения:")
+        print(f"  Окно агрегации сообщений (сек): {response_cfg.get('aggregate_window_seconds', 30)}")
+        print(f"  Задержка на символ (сек): {response_cfg.get('typing_delay_per_char', 0.05)}")
+        print(f"  Мин. задержка печати (сек): {response_cfg.get('min_typing_delay_seconds', 0.6)}")
+        print(f"  Макс. задержка печати (сек): {response_cfg.get('max_typing_delay_seconds', 6)}")
+        print(f"  Проактивный диалог: {'вкл' if proactive_cfg.get('enabled', False) else 'выкл'}")
+        print(f"  Таймаут простоя (сек): {proactive_cfg.get('inactivity_seconds', 300)}")
+        print(f"  Кулдаун инициативы (сек): {proactive_cfg.get('cooldown_seconds', 600)}")
+        targets = proactive_cfg.get("target_user_ids", [-1])
+        print(f"  Целевые пользователи: {targets}")
+
+        print("\n1. Изменить окно агрегации сообщений")
+        print("2. Изменить задержку на символ")
+        print("3. Изменить минимальную задержку печати")
+        print("4. Изменить максимальную задержку печати")
+        print("5. Включить/выключить проактивный диалог")
+        print("6. Изменить таймаут простоя")
+        print("7. Изменить кулдаун инициативы")
+        print("8. Изменить целевые user_id (через запятую)")
+        print("9. Изменить промпт инициативы")
+        print("0. Назад")
+
+        choice = input("\nВыберите опцию: ").strip()
+        if choice == "0":
+            return
+
+        if choice == "1":
+            value = input("Введите окно агрегации (сек): ").strip()
+            if value.isdigit():
+                response_cfg["aggregate_window_seconds"] = int(value)
+        elif choice == "2":
+            value = input("Введите задержку на символ (сек): ").strip()
+            try:
+                response_cfg["typing_delay_per_char"] = float(value)
+            except ValueError:
+                print("❌ Неверный формат.")
+        elif choice == "3":
+            value = input("Введите минимальную задержку (сек): ").strip()
+            try:
+                response_cfg["min_typing_delay_seconds"] = float(value)
+            except ValueError:
+                print("❌ Неверный формат.")
+        elif choice == "4":
+            value = input("Введите максимальную задержку (сек): ").strip()
+            try:
+                response_cfg["max_typing_delay_seconds"] = float(value)
+            except ValueError:
+                print("❌ Неверный формат.")
+        elif choice == "5":
+            proactive_cfg["enabled"] = not proactive_cfg.get("enabled", False)
+            print(f"Проактивный диалог теперь: {'вкл' if proactive_cfg['enabled'] else 'выкл'}")
+        elif choice == "6":
+            value = input("Введите таймаут простоя (сек): ").strip()
+            if value.isdigit():
+                proactive_cfg["inactivity_seconds"] = int(value)
+        elif choice == "7":
+            value = input("Введите кулдаун инициативы (сек): ").strip()
+            if value.isdigit():
+                proactive_cfg["cooldown_seconds"] = int(value)
+        elif choice == "8":
+            raw = input("Введите user_id через запятую (или -1 для всех): ").strip()
+            ids = [item.strip() for item in raw.split(",") if item.strip()]
+            try:
+                proactive_cfg["target_user_ids"] = [int(item) for item in ids]
+            except ValueError:
+                print("❌ Неверный формат.")
+        elif choice == "9":
+            proactive_cfg["prompt"] = input("Введите промпт инициативы: ").strip()
+        else:
+            print("❌ Неверный выбор.")
+
+        config_manager.update_yaml_setting("telegram", "response_timing", response_cfg)
+        config_manager.update_yaml_setting("telegram", "proactive_dialogue", proactive_cfg)
+
+
+def _handle_provider_settings(config_manager: ConfigManager):
+    print("\n" + "-"*40)
+    print("     ПРОВАЙДЕР МОДЕЛИ")
+    print("-"*40)
+
+    llm_cfg = config_manager.yaml_config.get("llm", {})
+    providers_cfg = config_manager.yaml_config.get("providers", {})
+    providers = list(providers_cfg.keys())
+
+    if not providers:
+        print("❌ Провайдеры не настроены в config.yaml.")
+        return
+
+    current = llm_cfg.get("provider", providers[0])
+    print(f"Текущий провайдер: {current}")
+    print("\nДоступные провайдеры:")
+    for i, name in enumerate(providers, 1):
+        marker = "✓" if name == current else " "
+        print(f"{i}. [{marker}] {name}")
+
+    choice = input("\nВыберите провайдера (номер) или 0 для отмены: ").strip()
+    if choice == "0":
+        print("Изменение отменено.")
+        return
+    if not choice.isdigit() or not (1 <= int(choice) <= len(providers)):
+        print("❌ Неверный выбор.")
+        return
+
+    selected = providers[int(choice) - 1]
+    config_manager.update_yaml_setting("llm", "provider", selected)
+    print(f"\n✅ Провайдер изменен на: {selected}")
+
+
 def _prompt_for_save_if_needed(config_manager: ConfigManager) -> bool:
     response = input("\nСохранить изменения в файл конфигурации? (д/н): ")
     return response.lower() in ['д', 'y', 'yes', 'да']
@@ -337,77 +387,21 @@ def display_menu():
     print("\n" + "="*40)
     print("          AI-RESPONDER")
     print("="*40)
-    print("1. Обучить модель")
-    print("2. Конвертировать JSON в датасет")
-    print("3. Список моделей")
-    print("4. Выбрать модель")
-    print("5. Запустить Telegram-бота")
-    print("6. Настройки")
-    print("7. Выход")
+    print("1. Конвертировать JSON в датасет")
+    print("2. Запустить Telegram-бота")
+    print("3. Настройки")
+    print("4. Выход")
     print("="*40)
-    return input("Выберите опцию (1-7): ")
+    return input("Выберите опцию (1-4): ")
 
 async def main():
     config_manager = ConfigManager()
     data_processor = DataProcessor(config_manager)
-    ml_config = config_manager.get_ml_config()
-    model_name = ml_config.get('model', 'gpt2')
-    try:
-        model_trainer = ModelTrainer(
-            config_manager,
-            device=config_manager.get_app_config("training_device"),
-            model=model_name
-        )
-    except TypeError:
-        print("Предупреждение: Ваша версия ModelTrainer не поддерживает выбор устройства. Используется CPU.")
-        model_trainer = ModelTrainer(config_manager, model=model_name)
 
     while True:
         choice = display_menu()
 
         if choice == "1":
-            datasets = data_processor.get_available_datasets()
-
-            if not datasets:
-                print("Датасеты не найдены. Добавьте их через опцию 2.")
-                continue
-
-            print("\nДоступные датасеты:")
-            for i, dataset in enumerate(datasets, 1):
-                print(f"{i}. {dataset['name']} ({dataset['type'].upper()})")
-
-            try:
-                file_idx = int(input("\nВыберите датасет для обучения (номер): ")) - 1
-                if 0 <= file_idx < len(datasets):
-                    selected_dataset = datasets[file_idx]
-
-                    data = data_processor.load_dataset(selected_dataset)
-                    participants = data_processor.get_chat_participants(data)
-
-                    print("\nДоступные пользователи для имитации:")
-                    for i, user in enumerate(participants, 1):
-                        print(f"{i}. {user['name']} (Сообщений: {user['message_count']})")
-
-                    user_idx = int(input("\nВыберите пользователя для имитации (номер): ")) - 1
-                    if 0 <= user_idx < len(participants):
-                        selected_user = participants[user_idx]
-                        print(f"\nВыбран пользователь: {selected_user['name']} с ID {selected_user['id']}")
-
-                        current_device = model_trainer.get_current_device()
-                        available_devices = model_trainer.get_available_devices()
-                        print(f"\nТекущее устройство для обучения: {available_devices.get(current_device, current_device)}")
-
-                        if input("Начать обучение? (д/н): ").lower() in ['д', 'y', 'yes', 'да']:
-                            model_path = model_trainer.train_model(selected_dataset, selected_user['id'])
-                            print(f"Модель успешно обучена и сохранена: {model_path}")
-                    else:
-                        print("Неверный выбор пользователя")
-                else:
-                    print("Неверный выбор файла")
-            except ValueError:
-                print("Пожалуйста, введите число")
-
-        elif choice == "2":
             print("\nВыберите JSON файл для конвертации в датасет")
 
             json_file_path = select_json_file()
@@ -430,76 +424,11 @@ async def main():
             else:
                 print("Ошибка при создании датасета")
 
-        elif choice == "3":
-            models = model_trainer.list_trained_models()
-
-            if not models:
-                print("Обученных моделей не найдено")
-                continue
-
-            print("\nДоступные модели:")
-            for i, model in enumerate(models, 1):
-                metadata = model["metadata"]
-                print(f"{i}. {model['name']}")
-                print(f"   Пользователь: {metadata.get('target_user', 'Неизвестно')}")
-                print(f"   Исходный файл: {metadata.get('source_file', 'Неизвестно')} ({metadata.get('source_file_type', 'unknown').upper()})")
-                print(f"   Обучающих пар: {metadata.get('training_pairs_count', 'Неизвестно')}")
-                print(f"   Устройство обучения: {metadata.get('training_device', 'Неизвестно')}")
-
-                if config_manager.get_app_config("selected_model") == os.path.join(model_trainer.model_dir, model['name']):
-                    print("   ✅ ТЕКУЩАЯ МОДЕЛЬ")
-
-        elif choice == "4":
-            models = model_trainer.list_trained_models()
-
-            if not models:
-                print("Обученных моделей не найдено. Сначала обучите модель.")
-                continue
-
-            print("\nВыберите модель для использования:")
-            for i, model in enumerate(models, 1):
-                metadata = model["metadata"]
-                print(f"{i}. {model['name']} (Пользователь: {metadata.get('target_user', 'Неизвестно')})")
-
-                if config_manager.get_app_config("selected_model") == os.path.join(model_trainer.model_dir, model['name']):
-                    print("   ✅ ТЕКУЩАЯ МОДЕЛЬ")
-
-            try:
-                model_idx = int(input("\nВыберите модель (номер) или 0 для отмены: "))
-                if 1 <= model_idx <= len(models):
-                    selected_model = models[model_idx-1]
-                    model_path = os.path.join(model_trainer.model_dir, selected_model['name'])
-
-                    test_generator = ResponseGenerator()
-                    if test_generator.load_model(model_path):
-                        config_manager.set_app_config("selected_model", model_path)
-                        print(f"\n✅ Модель успешно выбрана: {selected_model['name']}")
-                        print(f"   Пользователь: {selected_model['metadata'].get('target_user', 'Неизвестно')}")
-                    else:
-                        print("\n❌ Не удалось загрузить модель. Проверьте файлы модели.")
-                elif model_idx == 0:
-                    print("Отмена выбора модели.")
-                else:
-                    print("Неверный выбор модели.")
-            except ValueError:
-                print("Пожалуйста, введите число")
-
-        elif choice == "5":
+        elif choice == "2":
             print("Запуск Telegram клиента...")
 
-            model_path = config_manager.get_app_config("selected_model")
-            if not model_path:
-                models = model_trainer.list_trained_models()
-                if models:
-                    print("\n⚠️ Модель не выбрана. Будет использована последняя обученная модель.")
-                    print("Для выбора конкретной модели используйте пункт 4 в главном меню.")
-                else:
-                    print("\n❌ Нет доступных моделей. Сначала обучите модель.")
-                    continue
-
             try:
-                inference_config = config_manager.get_inference_config()
-                responder = TelegramResponder(config_manager, model_path)
+                responder = TelegramResponder(config_manager)
                 try:
                     await responder.start()
                 except ValueError as e:
@@ -517,15 +446,15 @@ async def main():
             except Exception as e:
                 print(f"\n❌ Не удалось запустить Telegram клиент: {e}")
 
-        elif choice == "6":
-            settings_menu(config_manager, model_trainer)
+        elif choice == "3":
+            settings_menu(config_manager)
 
-        elif choice == "7":
+        elif choice == "4":
             print("Выход из программы...")
             break
 
         else:
-            print("Неверный выбор. Пожалуйста, выберите 1-7")
+            print("Неверный выбор. Пожалуйста, выберите 1-4")
 
 
 if __name__ == "__main__":

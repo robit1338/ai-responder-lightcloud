@@ -35,7 +35,7 @@ from pyrogram.errors import (
     PhoneNumberInvalid, PhoneCodeInvalid
 )
 
-from src.utils.inference import ResponseGenerator
+from src.utils.provider_inference import ProviderResponseGenerator
 
 class TelegramResponder:
     def __init__(
@@ -54,7 +54,6 @@ class TelegramResponder:
         try:
             if config_manager:
                 telegram_config = config_manager.get_telegram_config()
-                inference_config = config_manager.get_inference_config()
                 logging_config = config_manager.get_section('logging', {})
                 logging.basicConfig(level=getattr(logging, logging_config.get('level', 'INFO')),
                                   format=logging_config.get('format', '%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
@@ -63,11 +62,38 @@ class TelegramResponder:
                 with open(config_path, 'r') as f:
                     config = yaml.safe_load(f)
                 telegram_config = config['telegram']
-                inference_config = config['inference']
                 logging_config = config['logging']
                 logging.basicConfig(level=getattr(logging, logging_config['level']), format=logging_config['format'])
                 
             self.logger = logging.getLogger(__name__)
+            self.anti_spam_config = telegram_config.get("anti_spam", {})
+            self.anti_spam_enabled = self.anti_spam_config.get("enabled", True)
+            self.cooldown_seconds = self.anti_spam_config.get("cooldown_seconds", 12)
+            self.duplicate_window_seconds = self.anti_spam_config.get("duplicate_window_seconds", 45)
+            self.max_duplicates = self.anti_spam_config.get("max_duplicates", 2)
+            self.last_response_at = {}
+            self.message_stats = {}
+            self.pending_messages = {}
+            self.pending_tasks = {}
+            self.last_user_message_at = {}
+            self.proactive_tasks = {}
+            self.last_proactive_at = {}
+
+            response_timing = telegram_config.get("response_timing", {})
+            self.aggregate_window_seconds = response_timing.get("aggregate_window_seconds", 30)
+            self.typing_delay_per_char = response_timing.get("typing_delay_per_char", 0.05)
+            self.min_typing_delay_seconds = response_timing.get("min_typing_delay_seconds", 0.6)
+            self.max_typing_delay_seconds = response_timing.get("max_typing_delay_seconds", 6)
+
+            proactive_config = telegram_config.get("proactive_dialogue", {})
+            self.proactive_enabled = proactive_config.get("enabled", False)
+            self.proactive_inactivity_seconds = proactive_config.get("inactivity_seconds", 300)
+            self.proactive_cooldown_seconds = proactive_config.get("cooldown_seconds", 600)
+            self.proactive_target_user_ids = proactive_config.get("target_user_ids", [-1])
+            self.proactive_prompt = proactive_config.get(
+                "prompt",
+                "Начни дружелюбный разговор и поддержи диалог."
+            )
 
             self.api_id = api_id or os.getenv("API_ID") or telegram_config.get('api_id')
             self.api_hash = api_hash or os.getenv("API_HASH") or telegram_config.get('api_hash')
@@ -103,8 +129,10 @@ class TelegramResponder:
                 sleep_threshold=10,
             )
             
-            self.response_generator = ResponseGenerator(model_path, config_manager)
-            self.model_info = self._get_model_info()
+            self.response_generator = ProviderResponseGenerator(config_manager)
+            self.model_info = self.response_generator.model
+            self.conversation_history = {}
+            self.messages_seen = 0
             
             self.is_running = False
             
@@ -124,20 +152,77 @@ class TelegramResponder:
             raise
 
     def _get_model_info(self):
-        if hasattr(self.response_generator, 'metadata'):
-            return f"{self.response_generator.metadata.get('target_user', 'Неизвестно')}"
-        return "Последняя доступная модель"
+        return self.response_generator.model
 
-    async def _send_response(self, client, message):
+    def _append_history(self, chat_id, role, content):
+        history = self.conversation_history.setdefault(chat_id, [])
+        history.append({"role": role, "content": content})
+        max_window = self.response_generator.profile_manager.messages_window
+        if len(history) > max_window:
+            self.conversation_history[chat_id] = history[-max_window:]
+
+    def _get_history(self, chat_id):
+        return self.conversation_history.get(chat_id, [])
+
+    def _calculate_typing_delay(self, response_text):
+        estimated = len(response_text) * self.typing_delay_per_char
+        clamped = max(self.min_typing_delay_seconds, estimated)
+        return min(clamped, self.max_typing_delay_seconds)
+
+    def _should_block_spam(self, message):
+        if not self.anti_spam_enabled:
+            return False
+
+        user_id = message.from_user.id if message.from_user else message.chat.id
+        now = asyncio.get_event_loop().time()
+        last_sent = self.last_response_at.get(user_id, 0)
+        if now - last_sent < self.cooldown_seconds:
+            self.logger.info("Анти-спам: cooldown активен для %s", user_id)
+            return True
+
+        normalized = message.text.strip().lower()
+        stats = self.message_stats.setdefault(user_id, {})
+        recent = stats.get("recent", [])
+        recent = [
+            (text, ts)
+            for text, ts in recent
+            if now - ts <= self.duplicate_window_seconds
+        ]
+        recent.append((normalized, now))
+        stats["recent"] = recent
+        duplicates = sum(1 for text, _ in recent if text == normalized)
+        if duplicates > self.max_duplicates:
+            self.logger.info("Анти-спам: слишком много дублей от %s", user_id)
+            return True
+
+        return False
+
+    async def _send_response(self, client, message, combined_text):
         try:
-            self.logger.info(f"Получено сообщение от {message.from_user.first_name} ({message.from_user.id}): {message.text}")
-            
-            response = self.response_generator.generate_response(message.text)
-            delay = min(len(response) * 0.1, 3)
+            sender_name = message.from_user.first_name if message.from_user else "Unknown"
+            sender_id = message.from_user.id if message.from_user else message.chat.id
+            self.logger.info("Получено сообщение от %s (%s): %s", sender_name, sender_id, combined_text)
+
+            chat_id = message.chat.id
+            self._append_history(chat_id, "user", combined_text)
+            self.messages_seen += 1
+            behavior_profile = self.response_generator.update_behavior_profile(
+                self._get_history(chat_id),
+                self.messages_seen,
+            )
+            response = self.response_generator.generate_response(
+                combined_text,
+                conversation_history=self._get_history(chat_id),
+                behavior_profile=behavior_profile,
+            )
+            delay = self._calculate_typing_delay(response)
             
             await client.send_chat_action(message.chat.id, ChatAction.TYPING)
             await asyncio.sleep(delay)
             await message.reply(response)
+            self._append_history(chat_id, "assistant", response)
+            user_id = message.from_user.id if message.from_user else message.chat.id
+            self.last_response_at[user_id] = asyncio.get_event_loop().time()
             
             self.logger.info(f"Отправлен ответ: {response}")
         except FloodWait as e:
@@ -146,6 +231,81 @@ class TelegramResponder:
             await self._send_response(client, message)
         except Exception as e:
             self.logger.error(f"Ошибка при отправке ответа: {e}")
+
+    async def _send_proactive_message(self, client, chat_id, user_id):
+        if not self.proactive_enabled:
+            return
+        if self.proactive_target_user_ids != [-1] and user_id not in self.proactive_target_user_ids:
+            return
+
+        now = asyncio.get_event_loop().time()
+        last_proactive = self.last_proactive_at.get(chat_id, 0)
+        if now - last_proactive < self.proactive_cooldown_seconds:
+            return
+
+        history = self._get_history(chat_id)
+        response = self.response_generator.generate_response(
+            self.proactive_prompt,
+            conversation_history=history,
+        )
+        delay = self._calculate_typing_delay(response)
+        await client.send_chat_action(chat_id, ChatAction.TYPING)
+        await asyncio.sleep(delay)
+        await client.send_message(chat_id, response)
+        self._append_history(chat_id, "assistant", response)
+        self.last_proactive_at[chat_id] = now
+
+    def _schedule_proactive(self, client, message):
+        if not self.proactive_enabled:
+            return
+        if message.chat.type != ChatType.PRIVATE:
+            return
+
+        chat_id = message.chat.id
+        user_id = message.from_user.id if message.from_user else chat_id
+        self.last_user_message_at[chat_id] = asyncio.get_event_loop().time()
+
+        existing = self.proactive_tasks.get(chat_id)
+        if existing and not existing.done():
+            existing.cancel()
+
+        async def _proactive_after_inactivity():
+            try:
+                await asyncio.sleep(self.proactive_inactivity_seconds)
+                last_msg = self.last_user_message_at.get(chat_id, 0)
+                now = asyncio.get_event_loop().time()
+                if now - last_msg >= self.proactive_inactivity_seconds:
+                    await self._send_proactive_message(client, chat_id, user_id)
+            except asyncio.CancelledError:
+                return
+
+        self.proactive_tasks[chat_id] = asyncio.create_task(_proactive_after_inactivity())
+
+    def _queue_message(self, client, message):
+        chat_id = message.chat.id
+        bucket = self.pending_messages.setdefault(chat_id, [])
+        bucket.append(message)
+
+        existing = self.pending_tasks.get(chat_id)
+        if existing and not existing.done():
+            existing.cancel()
+
+        async def _flush_after_window():
+            try:
+                await asyncio.sleep(self.aggregate_window_seconds)
+                messages = self.pending_messages.pop(chat_id, [])
+                if not messages:
+                    return
+                combined_text = "\n".join(msg.text for msg in messages if msg.text)
+                await self._send_response(client, messages[-1], combined_text)
+            except asyncio.CancelledError:
+                return
+
+        if self.aggregate_window_seconds > 0:
+            self.pending_tasks[chat_id] = asyncio.create_task(_flush_after_window())
+        else:
+            self.pending_messages.pop(chat_id, None)
+            asyncio.create_task(self._send_response(client, message, message.text))
 
     async def message_handler(self, client, message):
         if message.outgoing:
@@ -158,25 +318,25 @@ class TelegramResponder:
             if self.mode == "only_private_chats":
                 if message.chat.type == ChatType.PRIVATE:
                     if -1 in self.target_user_ids or message.from_user.id in self.target_user_ids:
-                        await self._send_response(client, message)
+                        if not self._should_block_spam(message):
+                            self._queue_message(client, message)
+                            self._schedule_proactive(client, message)
             
             elif self.mode == "only_channel_messages":
                 if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP, ChatType.CHANNEL]:
                     if -1 in self.target_channel_ids or message.chat.id in self.target_channel_ids:
-                        await self._send_response(client, message)
+                        if not self._should_block_spam(message):
+                            self._queue_message(client, message)
             
             elif self.mode == "stalker":
                 if message.from_user and message.from_user.id in self.target_user_ids:
-                    await self._send_response(client, message)
+                    if not self._should_block_spam(message):
+                        self._queue_message(client, message)
+                        self._schedule_proactive(client, message)
         except Exception as e:
             self.logger.error(f"Ошибка при обработке сообщения: {e}")
 
     async def start(self):
-        if not self.response_generator.model:
-            self.logger.error("Нет загруженной модели. Не могу запустить клиент.")
-            print("❌ Нет загруженной модели. Сначала обучите модель или выберите существующую.")
-            return
-        
         self.is_running = True
         
         self.client.add_handler(MessageHandler(self.message_handler))
