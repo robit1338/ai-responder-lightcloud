@@ -62,7 +62,14 @@ AI Telegram Responder — инструмент для автоматически
    ```bash
    python start/windows/start_windows.py
    ```
-
+   Или
+   ```bash
+   python -m start.windows.start_windows
+   ```
+   Или
+   ```bash
+   Просто запусти start.bat
+   ```
 ## 📦 Установка
 
 1. Клонируйте репозиторий и перейдите в папку проекта.
