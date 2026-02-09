@@ -157,8 +157,9 @@ def settings_menu(config_manager: ConfigManager):
         print("1. Режим Telegram-бота")
         print("2. Файлы поведения")
         print("3. Провайдер модели")
-        print("4. Сохранить все настройки")
-        print("5. Вернуться в главное меню")
+        print("4. Настройки диалога и задержек")
+        print("5. Сохранить все настройки")
+        print("6. Вернуться в главное меню")
         print("="*40)
         
         choice = input("Выберите опцию (1-5): ")
@@ -170,6 +171,8 @@ def settings_menu(config_manager: ConfigManager):
         elif choice == "3":
             _handle_provider_settings(config_manager)
         elif choice == "4":
+            _handle_dialogue_settings(config_manager)
+        elif choice == "5":
             if config_manager.save_yaml_config():
                 print("\n✅ Все настройки успешно сохранены в файл конфигурации!")
             else:
@@ -179,7 +182,7 @@ def settings_menu(config_manager: ConfigManager):
                 config_manager.save_yaml_config()
             break
         else:
-            print("❌ Неверный выбор. Пожалуйста, введите число от 1 до 5.")
+            print("❌ Неверный выбор. Пожалуйста, введите число от 1 до 6.")
 
 
 def _handle_telegram_mode_settings(config_manager: ConfigManager):
@@ -255,6 +258,91 @@ def _handle_behavior_files_settings(config_manager: ConfigManager):
         "behavior_files": [filename],
     })
     print(f"\n✅ Подключен файл поведения: {filename}")
+
+
+def _handle_dialogue_settings(config_manager: ConfigManager):
+    print("\n" + "-"*40)
+    print("     НАСТРОЙКИ ДИАЛОГА И ЗАДЕРЖЕК")
+    print("-"*40)
+
+    telegram_cfg = config_manager.yaml_config.get("telegram", {})
+    response_cfg = telegram_cfg.get("response_timing", {})
+    proactive_cfg = telegram_cfg.get("proactive_dialogue", {})
+
+    while True:
+        print("\nТекущие значения:")
+        print(f"  Окно агрегации сообщений (сек): {response_cfg.get('aggregate_window_seconds', 30)}")
+        print(f"  Задержка на символ (сек): {response_cfg.get('typing_delay_per_char', 0.05)}")
+        print(f"  Мин. задержка печати (сек): {response_cfg.get('min_typing_delay_seconds', 0.6)}")
+        print(f"  Макс. задержка печати (сек): {response_cfg.get('max_typing_delay_seconds', 6)}")
+        print(f"  Проактивный диалог: {'вкл' if proactive_cfg.get('enabled', False) else 'выкл'}")
+        print(f"  Таймаут простоя (сек): {proactive_cfg.get('inactivity_seconds', 300)}")
+        print(f"  Кулдаун инициативы (сек): {proactive_cfg.get('cooldown_seconds', 600)}")
+        targets = proactive_cfg.get("target_user_ids", [-1])
+        print(f"  Целевые пользователи: {targets}")
+
+        print("\n1. Изменить окно агрегации сообщений")
+        print("2. Изменить задержку на символ")
+        print("3. Изменить минимальную задержку печати")
+        print("4. Изменить максимальную задержку печати")
+        print("5. Включить/выключить проактивный диалог")
+        print("6. Изменить таймаут простоя")
+        print("7. Изменить кулдаун инициативы")
+        print("8. Изменить целевые user_id (через запятую)")
+        print("9. Изменить промпт инициативы")
+        print("0. Назад")
+
+        choice = input("\nВыберите опцию: ").strip()
+        if choice == "0":
+            return
+
+        if choice == "1":
+            value = input("Введите окно агрегации (сек): ").strip()
+            if value.isdigit():
+                response_cfg["aggregate_window_seconds"] = int(value)
+        elif choice == "2":
+            value = input("Введите задержку на символ (сек): ").strip()
+            try:
+                response_cfg["typing_delay_per_char"] = float(value)
+            except ValueError:
+                print("❌ Неверный формат.")
+        elif choice == "3":
+            value = input("Введите минимальную задержку (сек): ").strip()
+            try:
+                response_cfg["min_typing_delay_seconds"] = float(value)
+            except ValueError:
+                print("❌ Неверный формат.")
+        elif choice == "4":
+            value = input("Введите максимальную задержку (сек): ").strip()
+            try:
+                response_cfg["max_typing_delay_seconds"] = float(value)
+            except ValueError:
+                print("❌ Неверный формат.")
+        elif choice == "5":
+            proactive_cfg["enabled"] = not proactive_cfg.get("enabled", False)
+            print(f"Проактивный диалог теперь: {'вкл' if proactive_cfg['enabled'] else 'выкл'}")
+        elif choice == "6":
+            value = input("Введите таймаут простоя (сек): ").strip()
+            if value.isdigit():
+                proactive_cfg["inactivity_seconds"] = int(value)
+        elif choice == "7":
+            value = input("Введите кулдаун инициативы (сек): ").strip()
+            if value.isdigit():
+                proactive_cfg["cooldown_seconds"] = int(value)
+        elif choice == "8":
+            raw = input("Введите user_id через запятую (или -1 для всех): ").strip()
+            ids = [item.strip() for item in raw.split(",") if item.strip()]
+            try:
+                proactive_cfg["target_user_ids"] = [int(item) for item in ids]
+            except ValueError:
+                print("❌ Неверный формат.")
+        elif choice == "9":
+            proactive_cfg["prompt"] = input("Введите промпт инициативы: ").strip()
+        else:
+            print("❌ Неверный выбор.")
+
+        config_manager.update_yaml_setting("telegram", "response_timing", response_cfg)
+        config_manager.update_yaml_setting("telegram", "proactive_dialogue", proactive_cfg)
 
 
 def _handle_provider_settings(config_manager: ConfigManager):

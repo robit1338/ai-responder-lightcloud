@@ -15,6 +15,17 @@ telegram:
     only_channel_messages: "отвечает на все сообщения в беседах (если target_channel_ids=[-1], только в указанных беседах)"
     only_private_chats: "отвечает на все сообщения в личных чатах (если target_user_ids=[-1], только указанным пользователям)"
     stalker: "отвечает на сообщения определенных пользователей из target_user_ids"
+  response_timing:
+    aggregate_window_seconds: 30
+    typing_delay_per_char: 0.05
+    min_typing_delay_seconds: 0.6
+    max_typing_delay_seconds: 6
+  proactive_dialogue:
+    enabled: false
+    inactivity_seconds: 300
+    cooldown_seconds: 600
+    target_user_ids: [-1]
+    prompt: "Начни дружелюбный разговор и поддержи диалог."
   anti_spam:
     enabled: true
     cooldown_seconds: 12
