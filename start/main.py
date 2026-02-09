@@ -162,7 +162,7 @@ def settings_menu(config_manager: ConfigManager):
         print("6. Вернуться в главное меню")
         print("="*40)
         
-        choice = input("Выберите опцию (1-6): ")
+        choice = input("Выберите опцию (1-5): ")
 
         if choice == "1":
             _handle_telegram_mode_settings(config_manager)
@@ -177,7 +177,7 @@ def settings_menu(config_manager: ConfigManager):
                 print("\n✅ Все настройки успешно сохранены в файл конфигурации!")
             else:
                 print("\n❌ Не удалось сохранить настройки. Проверьте права доступа к файлу.")
-        elif choice == "6":
+        elif choice == "5":
             if _prompt_for_save_if_needed(config_manager):
                 config_manager.save_yaml_config()
             break
